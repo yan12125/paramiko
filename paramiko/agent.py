@@ -35,12 +35,15 @@ from paramiko.py3compat import byte_chr
 from paramiko.ssh_exception import SSHException, AuthenticationException
 from paramiko.message import Message
 from paramiko.pkey import PKey
+from paramiko.ed25519key import Ed25519Key
 from paramiko.util import retry_on_signal
 
+SSH_AGENT_SUCCESS = 6
 cSSH2_AGENTC_REQUEST_IDENTITIES = byte_chr(11)
 SSH2_AGENT_IDENTITIES_ANSWER = 12
 cSSH2_AGENTC_SIGN_REQUEST = byte_chr(13)
 SSH2_AGENT_SIGN_RESPONSE = 14
+cSSH_AGENTC_ADD_IDENTITY = byte_chr(17)
 
 
 
@@ -60,6 +63,26 @@ class AgentSSH(object):
             SSH agent
         """
         return self._keys
+
+    def add_key(self, pkey):
+        if isinstance(pkey, Ed25519Key):
+            self.add_ed25519_key(pkey)
+        else:
+            raise NotImplementedError
+
+    def add_ed25519_key(self, pkey):
+        # FIXME: Don't access private fields
+        signing_key = pkey._signing_key.encode()
+        verifying_key = pkey._signing_key.verify_key.encode()
+        msg = Message()
+        msg.add_byte(cSSH_AGENTC_ADD_IDENTITY)
+        msg.add_string("ssh-ed25519")
+        msg.add_string(verifying_key)
+        msg.add_string(signing_key + verifying_key)
+        msg.add_string(pkey.comment)
+        ptype, result = self._send_message(msg)
+        if ptype != SSH_AGENT_SUCCESS:
+            raise SSHException('failed to add an Ed25519 key')
 
     def _connect(self, conn):
         self._conn = conn

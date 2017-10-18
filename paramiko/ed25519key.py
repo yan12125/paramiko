@@ -58,7 +58,7 @@ class Ed25519Key(PKey):
     def __init__(self, msg=None, data=None, filename=None, password=None,
                  file_obj=None):
         self.public_blob = None
-        verifying_key = signing_key = None
+        verifying_key = signing_key = comment = None
         if msg is None and data is not None:
             msg = Message(data)
         if msg is not None:
@@ -75,13 +75,14 @@ class Ed25519Key(PKey):
             data = self._read_private_key("OPENSSH", file_obj)
 
         if filename or file_obj:
-            signing_key = self._parse_signing_key_data(data, password)
+            signing_key, comment = self._parse_signing_key_data(data, password)
 
         if signing_key is None and verifying_key is None:
             raise ValueError("need a key")
 
         self._signing_key = signing_key
         self._verifying_key = verifying_key
+        self._comment = comment
 
     def _parse_signing_key_data(self, data, password):
         from paramiko.transport import Transport
@@ -154,6 +155,7 @@ class Ed25519Key(PKey):
             raise SSHException("Invalid key")
 
         signing_keys = []
+        comments = []
         for i in range(num_keys):
             if message.get_text() != "ssh-ed25519":
                 raise SSHException("Invalid key")
@@ -169,12 +171,12 @@ class Ed25519Key(PKey):
                 key_data[32:]
             )
             signing_keys.append(signing_key)
-            # Comment, ignore.
-            message.get_binary()
+
+            comments.append(message.get_binary())
 
         if len(signing_keys) != 1:
             raise SSHException("Invalid key")
-        return signing_keys[0]
+        return signing_keys[0], comments[0]
 
     def asbytes(self):
         if self.can_sign():
@@ -218,3 +220,7 @@ class Ed25519Key(PKey):
             return False
         else:
             return True
+
+    @property
+    def comment(self):
+        return self._comment
