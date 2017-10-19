@@ -36,6 +36,7 @@ from paramiko.ssh_exception import SSHException, AuthenticationException
 from paramiko.message import Message
 from paramiko.pkey import PKey
 from paramiko.ed25519key import Ed25519Key
+from paramiko.rsakey import RSAKey
 from paramiko.util import retry_on_signal
 
 SSH_AGENT_SUCCESS = 6
@@ -64,25 +65,51 @@ class AgentSSH(object):
         """
         return self._keys
 
-    def add_key(self, pkey):
+    def add_key(self, pkey, comment=None):
+        if not pkey.can_sign():
+            raise ValueError('Only private keys can be added')
+
         if isinstance(pkey, Ed25519Key):
-            self.add_ed25519_key(pkey)
+            msg = self.add_ed25519_key_msg(pkey, comment)
+        elif isinstance(pkey, RSAKey):
+            msg = self.add_rsa_key_msg(pkey, comment)
         else:
             raise NotImplementedError
 
-    def add_ed25519_key(self, pkey):
+        ptype, result = self._send_message(msg)
+        if ptype != SSH_AGENT_SUCCESS:
+            raise SSHException('failed to add a %s key' % pkey.get_name())
+
+    def add_ed25519_key_msg(self, pkey, comment=None):
         # FIXME: Don't access private fields
         signing_key = pkey._signing_key.encode()
         verifying_key = pkey._signing_key.verify_key.encode()
         msg = Message()
         msg.add_byte(cSSH_AGENTC_ADD_IDENTITY)
-        msg.add_string("ssh-ed25519")
+        msg.add_string('ssh-ed25519')
         msg.add_string(verifying_key)
         msg.add_string(signing_key + verifying_key)
-        msg.add_string(pkey.comment)
-        ptype, result = self._send_message(msg)
-        if ptype != SSH_AGENT_SUCCESS:
-            raise SSHException('failed to add an Ed25519 key')
+        if comment is None:
+            comment = pkey.comment
+        msg.add_string(comment)
+        return msg
+
+    def add_rsa_key_msg(self, pkey, comment=None):
+        private_numbers = pkey.private_numbers()
+        public_numbers = private_numbers.public_numbers()
+        msg = Message()
+        msg.add_byte(cSSH_AGENTC_ADD_IDENTITY)
+        msg.add_string('ssh-rsa')
+        msg.add_mpint(public_numbers.n)
+        msg.add_mpint(public_numbers.e)
+        msg.add_mpint(private_numbers.d)
+        msg.add_mpint(private_numbers.iqmp)
+        msg.add_mpint(private_numbers.p)
+        msg.add_mpint(private_numbers.q)
+        if comment is None:
+            comment = ""
+        msg.add_string(comment)
+        return msg
 
     def _connect(self, conn):
         self._conn = conn
